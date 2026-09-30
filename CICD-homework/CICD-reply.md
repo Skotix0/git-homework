@@ -218,3 +218,104 @@ pipeline {
 
 #### Ответ на задание 4*:
 
+Тело скрипта:
+
+```groovy
+pipeline {
+    agent any
+
+    environment {
+        NEXUS_URL = 'http://localhost:8081'
+        NEXUS_REPOSITORY = 'go-binaries'
+    }
+
+    stages {
+        stage('Git') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/Skotix0/fork-for-cicd-homework.git'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''
+                    set -eu
+                    go version
+                    go test .
+                '''
+            }
+        }
+
+        stage('Build versioned binary') {
+            steps {
+                sh '''
+                    set -eu
+
+                    # Убираем артефакты предыдущей сборки из workspace.
+                    rm -rf dist
+                    mkdir -p dist
+
+                    ARTIFACT_NAME="app-v${BUILD_NUMBER}"
+
+                    CGO_ENABLED=0 GOOS=linux go build \
+                        -a \
+                        -installsuffix nocgo \
+                        -o "dist/${ARTIFACT_NAME}" \
+                        .
+
+                    test -s "dist/${ARTIFACT_NAME}"
+
+                    echo "Собран файл: ${ARTIFACT_NAME}"
+                    ls -lh "dist/${ARTIFACT_NAME}"
+                    sha256sum "dist/${ARTIFACT_NAME}"
+                '''
+            }
+        }
+
+        stage('Upload to Nexus') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-credentials',
+                        usernameVariable: 'NEXUS_USER',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        set -eu
+
+                        ARTIFACT_NAME="app-v${BUILD_NUMBER}"
+                        ARTIFACT_URL="${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/hello-world/${ARTIFACT_NAME}"
+
+                        curl --fail --show-error --silent \
+                            --user "$NEXUS_USER:$NEXUS_PASSWORD" \
+                            --upload-file "dist/${ARTIFACT_NAME}" \
+                            "$ARTIFACT_URL"
+
+                        echo "Файл успешно загружен: $ARTIFACT_URL"
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            archiveArtifacts artifacts: 'dist/app-v*',
+                             fingerprint: true
+
+            echo "Версия v${env.BUILD_NUMBER} успешно опубликована в Nexus."
+        }
+
+        failure {
+            echo 'Ошибка сборки или публикации. Проверь Console Output.'
+        }
+    }
+}
+```
+
+Результат после двух новых сборок:
+
+![1](https://github.com/Skotix0/homeworks-netology/blob/main/CICD-homework/screenshots/%D0%A0%D0%B5%D0%B7%D1%83%D0%BB%D1%8C%D1%82%D0%B0%D1%82%20%D0%B7%D0%B0%D0%B4%D0%B0%D0%BD%D0%B8%D0%B5%204.png)
